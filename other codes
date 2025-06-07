@@ -1,0 +1,10 @@
+# Deactivate current venv
+deactivate
+
+# Remove the current venv
+Remove-Item -Recurse -Force venv
+
+# Install Python 3.11 or 3.12, then create new venv
+python3.11 -m venv venv  # or python3.12
+.\venv\Scripts\activate
+pip install -r requirements.txt

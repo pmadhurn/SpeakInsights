@@ -1,0 +1,28 @@
+{
+    "app_settings": {
+      "title": "SpeakInsights",
+      "version": "1.0.0",
+      "theme": "light",
+      "max_upload_size_mb": 100
+    },
+    
+    "model_settings": {
+      "whisper_model": "tiny",
+      "summarizer_model": "sshleifer/distilbart-xsum-1-1",
+      "sentiment_model": "distilbert-base-uncased-finetuned-sst-2-english",
+      "max_summary_length": 150
+    },
+    
+    "processing_settings": {
+      "chunk_size": 1000,
+      "max_action_items": 10,
+      "enable_speaker_detection": false,
+      "languages": ["en"]
+    },
+    
+    "integration_settings": {
+      "mcp_enabled": true,
+      "export_formats": ["json", "txt", "csv"],
+      "auto_export": false
+    }
+  }
