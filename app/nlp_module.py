@@ -12,7 +12,7 @@ except:
 # Initialize models (this will download on first run)
 print("Loading NLP models...")
 summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")  # Smaller model
-sentiment_analyzer = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
+sentiment_analyzer = pipeline("text-classification", model="SamLowe/roberta-base-go_emotions", top_k=None)
 
 def summarize_text(text, max_length=150):
     """Generate summary of the transcript"""
@@ -33,22 +33,48 @@ def summarize_text(text, max_length=150):
         return f"Could not generate summary: {str(e)}"
 
 def analyze_sentiment(text):
-    """Analyze overall sentiment"""
     try:
-        # Analyze first 512 characters
-        sample = text[:512]
-        result = sentiment_analyzer(sample)
+        sample = text[:512] # Keep sampling for performance
+        raw_results = sentiment_analyzer(sample)
+
+        professional_sentiments_list = [
+            'admiration', 'amusement', 'approval', 'excitement', 'gratitude',
+            'joy', 'love', 'optimism', 'pride', 'relief', 'anger',
+            'annoyance', 'disappointment', 'disapproval', 'disgust',
+            'fear', 'sadness', 'remorse', 'embarrassment', 'nervousness',
+            'confusion', 'curiosity', 'neutral', 'surprise'
+        ]
+
+        # The pipeline with top_k=None returns a list containing a list of dicts
+        # e.g. [[{'label': '...', 'score': ...}, {'label': '...', 'score': ...}]]
+        if not raw_results or not raw_results[0]:
+            return "Could not analyze sentiment (empty model output)"
+
+        processed_sentiments = []
+        for result in raw_results[0]: # Access the inner list of sentiment dicts
+            if result['label'] in professional_sentiments_list and result['score'] > 0.3:
+                processed_sentiments.append(result)
         
-        label = result[0]['label']
-        score = result[0]['score']
+        # Sort by score
+        processed_sentiments.sort(key=lambda x: x['score'], reverse=True)
         
-        # Convert to more readable format
-        if label == 'POSITIVE':
-            return f"Positive ({score:.2%} confidence)"
-        else:
-            return f"Negative ({score:.2%} confidence)"
+        top_sentiments = processed_sentiments[:3]
+
+        if not top_sentiments:
+            # Check if 'neutral' was high scoring but below 0.3 for professional list,
+            # or simply return a default neutral message.
+            # For simplicity, let's find the raw neutral score if no other professional sentiment is strong.
+            neutral_score_info = next((item for item in raw_results[0] if item['label'] == 'neutral'), None)
+            if neutral_score_info and neutral_score_info['score'] > 0.5: # Default threshold for general neutral
+                 return f"Neutral ({neutral_score_info['score']:.2%})"
+            return "No strong specific emotions detected"
+
+        sentiment_strings = [f"{s['label'].capitalize()} ({s['score']:.0%})" for s in top_sentiments]
+        return "Top emotions: " + ", ".join(sentiment_strings)
             
     except Exception as e:
+        # Log the exception e for debugging
+        print(f"Error in analyze_sentiment: {str(e)}")
         return "Could not analyze sentiment"
 
 def extract_action_items(text):
