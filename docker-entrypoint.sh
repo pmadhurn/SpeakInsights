@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 echo "Starting SpeakInsights..."
 
 # Start the backend API
