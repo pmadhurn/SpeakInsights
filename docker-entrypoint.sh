@@ -1,6 +1,12 @@
 #!/bin/sh
 echo "Starting SpeakInsights..."
 
+# Pre-download Whisper model if not present
+python -c "import whisper, os; model_dir = '/app/models/whisper'; os.makedirs(model_dir, exist_ok=True); whisper.load_model('base', download_root=model_dir)"
+
+# Pre-download HuggingFace summarization model if not present
+python -c "from transformers import pipeline; import os; model_dir = '/app/models/transformers'; os.makedirs(model_dir, exist_ok=True); pipeline('summarization', model='facebook/bart-large-cnn', cache_dir=model_dir)"
+
 # Start the backend API
 BACKEND_PORT=${PORT:-8000}
 echo "Starting backend on port ${BACKEND_PORT}..."

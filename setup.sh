@@ -28,3 +28,5 @@ echo "🗄️ Initializing database..."
 python -c "from app.database import init_database; init_database()"
 
 echo "✅ Setup complete! Run 'python run.py' to start the application."
+
+docker build -t speakinsights .

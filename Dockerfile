@@ -23,7 +23,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Create data directory
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data /app/models
+VOLUME ["/app/data", "/app/models"]
 
 # Change ownership of /app and its contents
 RUN chown -R appuser:appgroup /app
