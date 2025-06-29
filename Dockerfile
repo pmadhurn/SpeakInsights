@@ -19,18 +19,26 @@ COPY requirements.txt ./
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the project
-COPY . .
-
-# Create necessary directories with proper permissions
+# Create necessary directories and set permissions
 RUN mkdir -p /app/data /app/models /home/appuser/.cache \
     && chown -R appuser:appgroup /app /home/appuser \
-    && chmod -R 755 /app /home/appuser
+    && chmod -R 777 /app/data /app/models /home/appuser/.cache
 
 # Set environment variables for model caching
 ENV TRANSFORMERS_CACHE=/app/models/transformers
 ENV HF_HOME=/app/models/huggingface
 ENV TORCH_HOME=/app/models/torch
+
+# Copy the rest of the project
+COPY . .
+
+# Ensure all files have correct permissions
+RUN chown -R appuser:appgroup /app && \
+    chmod -R 755 /app && \
+    chmod -R 777 /app/data /app/models /home/appuser/.cache
+
+# Create volumes
+VOLUME ["/app/data", "/app/models"]
 
 # Expose the ports your apps use
 EXPOSE 8000 8501
