@@ -1,6 +1,7 @@
 from transformers import pipeline
 import nltk
 import re
+from config import config
 
 # Download required NLTK data
 try:
@@ -9,14 +10,49 @@ try:
 except:
     pass
 
-# Initialize models (this will download on first run)
-print("Loading NLP models...")
-summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")  # Smaller model
-sentiment_analyzer = pipeline("text-classification", model="SamLowe/roberta-base-go_emotions", top_k=None)
+# Lazy loading for models
+_summarizer = None
+_sentiment_analyzer = None
 
-def summarize_text(text, max_length=50):
+def get_summarizer():
+    """Get summarizer with lazy loading"""
+    global _summarizer
+    if _summarizer is None:
+        print(f"Loading summarization model: {config.SUMMARIZER_MODEL}")
+        try:
+            _summarizer = pipeline("summarization", model=config.SUMMARIZER_MODEL)
+            print("✅ Summarization model loaded successfully")
+        except Exception as e:
+            print(f"❌ Error loading summarization model: {e}")
+            print("Falling back to default model...")
+            _summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-6-6")
+    return _summarizer
+
+def get_sentiment_analyzer():
+    """Get sentiment analyzer with lazy loading"""
+    global _sentiment_analyzer
+    if _sentiment_analyzer is None:
+        print(f"Loading sentiment model: {config.SENTIMENT_MODEL}")
+        try:
+            _sentiment_analyzer = pipeline("text-classification", model=config.SENTIMENT_MODEL)
+            print("✅ Sentiment model loaded successfully")
+        except Exception as e:
+            print(f"❌ Error loading sentiment model: {e}")
+            print("Falling back to default model...")
+            _sentiment_analyzer = pipeline("text-classification", model="distilbert-base-uncased-finetuned-sst-2-english")
+    return _sentiment_analyzer
+
+def summarize_text(text, max_length=None):
     """Generate summary of the transcript"""
+    if not text or not text.strip():
+        return "No content to summarize"
+    
+    if max_length is None:
+        max_length = config.MAX_SUMMARY_LENGTH
+    
     try:
+        summarizer = get_summarizer()
+        
         # Handle long texts by chunking
         max_chunk_length = 1024
         
@@ -30,61 +66,50 @@ def summarize_text(text, max_length=50):
             return summary[0]['summary_text'] + " [Summary of beginning of meeting]"
             
     except Exception as e:
+        print(f"Error in summarize_text: {e}")
         return f"Could not generate summary: {str(e)}"
 
 def analyze_sentiment(text):
+    """Analyze sentiment of the text"""
+    if not text or not text.strip():
+        return "neutral"
+    
     try:
+        sentiment_analyzer = get_sentiment_analyzer()
+        
         # Use a simpler sentiment analysis approach to avoid tensor size issues
-        sample = text[:256] if len(text) > 256 else text  # Limit input size
+        sample = text[:512] if len(text) > 512 else text  # Limit input size
         
         # Use a more robust sentiment analysis
         raw_results = sentiment_analyzer(sample, truncation=True, padding=True)
 
-        professional_sentiments_list = [
-            'admiration', 'amusement', 'approval', 'excitement', 'gratitude',
-            'joy', 'love', 'optimism', 'pride', 'relief', 'anger',
-            'annoyance', 'disappointment', 'disapproval', 'disgust',
-            'fear', 'sadness', 'remorse', 'embarrassment', 'nervousness',
-            'confusion', 'curiosity', 'neutral', 'surprise'
-        ]
-
-        # Handle different output formats
+        # Handle different model outputs
         if isinstance(raw_results, list) and len(raw_results) > 0:
-            results = raw_results[0] if isinstance(raw_results[0], list) else raw_results
-        else:
-            results = raw_results
-
-        if not results:
-            return "Could not analyze sentiment (empty model output)"
-
-        processed_sentiments = []
-        for result in results:
+            result = raw_results[0]
+            
             if isinstance(result, dict) and 'label' in result and 'score' in result:
-                if result['label'] in professional_sentiments_list and result['score'] > 0.2:
-                    processed_sentiments.append(result)
-        
-        # Sort by score
-        processed_sentiments.sort(key=lambda x: x['score'], reverse=True)
-        
-        top_sentiments = processed_sentiments[:3]
-
-        if not top_sentiments:
-            # Check for neutral sentiment
-            neutral_score_info = next((item for item in results if isinstance(item, dict) and item.get('label') == 'neutral'), None)
-            if neutral_score_info and neutral_score_info.get('score', 0) > 0.3:
-                 return f"Neutral ({neutral_score_info['score']:.2%})"
-            return "No strong specific emotions detected"
-
-        sentiment_strings = [f"{s['label'].capitalize()} ({s['score']:.0%})" for s in top_sentiments]
-        return "Top emotions: " + ", ".join(sentiment_strings)
+                label = result['label'].upper()
+                score = result['score']
+                
+                # Map different model outputs to standard sentiment
+                if label in ['POSITIVE', 'POS', '1']:
+                    return f"positive ({score:.1%})"
+                elif label in ['NEGATIVE', 'NEG', '0']:
+                    return f"negative ({score:.1%})"
+                else:
+                    return f"neutral ({score:.1%})"
+            
+        return "neutral"
             
     except Exception as e:
-        # Log the exception e for debugging
-        print(f"Error in analyze_sentiment: {str(e)}")
-        return "Could not analyze sentiment"
+        print(f"Error in analyze_sentiment: {e}")
+        return "neutral"
 
 def extract_action_items(text):
     """Extract potential action items from text"""
+    if not text or not text.strip():
+        return []
+    
     action_items = []
     
     # Keywords that often indicate action items
@@ -94,11 +119,18 @@ def extract_action_items(text):
         r"(?i)(should|must)\s+(.+?)(?:\.|$)",
         r"(?i)(action item[s]?:|todo:|task:)\s*(.+?)(?:\.|$)",
         r"(?i)(follow up on|follow-up on)\s+(.+?)(?:\.|$)",
+        r"(?i)(let's|let us)\s+(.+?)(?:\.|$)",
+        r"(?i)(going to|gonna)\s+(.+?)(?:\.|$)",
     ]
     
-    sentences = text.split('.')
+    # Split into sentences more robustly
+    sentences = re.split(r'[.!?]+', text)
     
     for sentence in sentences:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+            
         for pattern in action_patterns:
             matches = re.findall(pattern, sentence)
             for match in matches:
@@ -106,8 +138,11 @@ def extract_action_items(text):
                 action = match[1] if len(match) > 1 else match[0]
                 action = action.strip()
                 
+                # Clean up the action text
+                action = re.sub(r'\s+', ' ', action)  # Remove extra whitespace
+                
                 # Filter out very short or very long items
-                if 10 < len(action) < 200:
+                if 5 < len(action) < 150:
                     action_items.append(action.capitalize())
     
     # Remove duplicates while preserving order
@@ -118,4 +153,4 @@ def extract_action_items(text):
             seen.add(item.lower())
             unique_items.append(item)
     
-    return unique_items[:5]  # Return top 5 items
+    return unique_items[:config.MAX_ACTION_ITEMS]

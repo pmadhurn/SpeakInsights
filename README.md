@@ -50,6 +50,35 @@ Key Python modules and their functions:
 
 ## Setup and Installation
 
+### 🐳 Docker Deployment (Recommended)
+
+The easiest way to run SpeakInsights is using Docker:
+
+**Windows:**
+```cmd
+docker-deploy.bat
+```
+
+**Linux/Mac:**
+```bash
+chmod +x docker-deploy.sh
+./docker-deploy.sh
+```
+
+**Manual Docker:**
+```bash
+docker-compose up -d
+```
+
+Access the application at:
+- Frontend: http://localhost:8501
+- API: http://localhost:8000
+- API Docs: http://localhost:8000/docs
+
+For detailed Docker deployment instructions, see [DOCKER.md](DOCKER.md).
+
+### 💻 Local Development Setup
+
 Follow these steps to set up and run SpeakInsights on your local machine:
 
 1.  **Clone the Repository:**
@@ -88,18 +117,30 @@ Follow these steps to set up and run SpeakInsights on your local machine:
     The SQLite database (`speakinsights.db`) is typically initialized automatically when `app/database.py` is first imported (which happens when the backend app starts). If you need to manually create it or if there's a specific setup script for it (e.g., within `setup.sh`), refer to that.
 
 6.  **Running the Application:**
+    
+    **Simple Start (Recommended):**
+    ```bash
+    python start.py
+    ```
+    This will start both the backend API and frontend automatically.
+    
+    **Alternative Start Methods:**
+    ```bash
+    python run.py              # Start full application
+    python start.py --api      # Start API server only
+    python start.py --frontend # Start frontend only
+    python start.py --mcp      # Start MCP server for Claude integration
+    ```
+    
+    **Manual Start:**
     *   **Backend (FastAPI):**
-        The backend server can usually be started using Uvicorn. Check scripts like `run.py` or `hackathon_launcher.py` for the exact command. A common command would be:
         ```bash
         uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
         ```
-        (The `--reload` flag is for development and automatically reloads the server on code changes.)
     *   **Frontend (Streamlit):**
-        The frontend application is run using Streamlit:
         ```bash
-        streamlit run frontend/app.py
+        streamlit run frontend/app.py --server.port 8501
         ```
-    You might find a script like `run_all.py` or `setup.sh` that starts both services.
 
 7.  **Configuration (Optional):**
     Review `config.py` if you need to change default settings like model choices, file paths, or API ports. Some configurations might also be in `config.json`.

@@ -26,24 +26,27 @@ services:
       - speakinsights-network
 
   speakinsights:
-    build: .
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: speakinsights-app
     ports:
       - "8501:8501"  # Streamlit
       - "8000:8000"  # FastAPI
-      - "3000:3000"  # MCP API access
+      - "3000:3000"  # External API access
     volumes:
       # Named volumes for persistent data (survives rebuilds)
       - app_data:/app/data
       - model_cache:/app/models
-      - user_uploads:/app/uploads
-      # SQLite database backup (in case you still want to use SQLite)
       - sqlite_data:/app/database
-      # Host backup directory (accessible from Windows)
+      # Host directories for easy access
       - ./persistent_data:/app/persistent_data
       - ./backups:/app/backups
+      # Config file for easy updates
+      - ./config.json:/app/config.json:ro
     environment:
       - PYTHONPATH=/app
-      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONUNBUFFERED=1
       # Database connection for PostgreSQL
       - DATABASE_URL=postgresql://speakinsights_user:speakinsights_password@postgres:5432/speakinsights
       # SQLite fallback
@@ -52,44 +55,56 @@ services:
       - TRANSFORMERS_CACHE=/app/models/transformers
       - HF_HOME=/app/models/huggingface
       - TORCH_HOME=/app/models/torch
+      # Whisper model configuration
+      - WHISPER_MODEL=${WHISPER_MODEL:-base}
+      # Application mode
+      - SPEAKINSIGHTS_MODE=${SPEAKINSIGHTS_MODE:-full}
     depends_on:
       postgres:
         condition: service_healthy
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    command: python run.py
+    command: ./docker-entrypoint.sh
     restart: unless-stopped
     networks:
       - speakinsights-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"] 
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     
   speakinsights-mcp:
-    build: .
+    build: 
+      context: .
+      dockerfile: Dockerfile
     container_name: speakinsights-mcp
     volumes:
       # Same persistent volumes as main app
       - app_data:/app/data
       - model_cache:/app/models
-      - user_uploads:/app/uploads
       - sqlite_data:/app/database
       - ./persistent_data:/app/persistent_data
       - ./backups:/app/backups
+      - ./config.json:/app/config.json:ro
     environment:
       - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
       - DATABASE_URL=postgresql://speakinsights_user:speakinsights_password@postgres:5432/speakinsights
       - SQLITE_PATH=/app/database/speakinsights.db
+      - TRANSFORMERS_CACHE=/app/models/transformers
+      - HF_HOME=/app/models/huggingface
+      - TORCH_HOME=/app/models/torch
+      - WHISPER_MODEL=${WHISPER_MODEL:-base}
+      - SPEAKINSIGHTS_MODE=mcp
     depends_on:
       postgres:
+        condition: service_healthy
+      speakinsights:
         condition: service_healthy
     stdin_open: true
     tty: true
     restart: unless-stopped
-    # Keep container running so Claude can connect via docker exec
-    command: tail -f /dev/null
+    command: ./docker-entrypoint.sh
     networks:
       - speakinsights-network
 

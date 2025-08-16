@@ -1,40 +1,78 @@
-#!/bin/sh
-echo "Starting SpeakInsights..."
+#!/bin/bash
+set -e
 
-# Pre-download Whisper model if not present
-python -c "import whisper, os; model_dir = '/app/models/whisper'; os.makedirs(model_dir, exist_ok=True); whisper.load_model('base', download_root=model_dir)"
+echo "🚀 Starting SpeakInsights in Docker..."
 
-# Pre-download HuggingFace summarization model if not present
-python -c "from transformers import pipeline; import os; model_dir = '/app/models/transformers'; os.makedirs(model_dir, exist_ok=True); pipeline('summarization', model='facebook/bart-large-cnn', cache_dir=model_dir)"
-
-# Start the backend API
-BACKEND_PORT=${PORT:-8000}
-echo "Starting backend on port ${BACKEND_PORT}..."
-uvicorn app.main:app --host 0.0.0.0 --port ${BACKEND_PORT} &
-
-# Health check for backend
-echo "Waiting for backend to be healthy..."
-RETRY_COUNT=0
-MAX_RETRIES=30 # Try for 30 seconds (30 * 1 second sleep)
-HEALTHY=false
-while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-    # Try to curl the /docs endpoint, suppress output, and fail on error
-    if curl -s --fail http://localhost:${BACKEND_PORT}/docs > /dev/null; then
-        echo "Backend is healthy!"
-        HEALTHY=true
-        break
-    fi
-    RETRY_COUNT=$((RETRY_COUNT+1))
-    echo "Backend not ready yet (attempt: $RETRY_COUNT/$MAX_RETRIES)..."
-    sleep 1
-done
-
-if [ "$HEALTHY" != "true" ]; then
-    echo "Error: Backend did not become healthy after $MAX_RETRIES seconds."
-    # For now, we'll print an error but let Streamlit attempt to start.
-    # Depending on requirements, one might choose to exit 1 here.
+# Wait for database if using PostgreSQL
+if [ -n "$DATABASE_URL" ] && [[ "$DATABASE_URL" == postgresql* ]]; then
+    echo "⏳ Waiting for PostgreSQL database..."
+    
+    # Extract host and port from DATABASE_URL
+    DB_HOST=$(echo $DATABASE_URL | sed -n 's/.*@\([^:]*\):.*/\1/p')
+    DB_PORT=$(echo $DATABASE_URL | sed -n 's/.*:\([0-9]*\)\/.*/\1/p')
+    
+    # Wait for database to be ready
+    for i in {1..30}; do
+        if curl -s "http://${DB_HOST}:${DB_PORT}" > /dev/null 2>&1 || \
+           nc -z "${DB_HOST}" "${DB_PORT}" > /dev/null 2>&1; then
+            echo "✅ Database is ready!"
+            break
+        fi
+        echo "⏳ Waiting for database... (attempt $i/30)"
+        sleep 2
+    done
 fi
 
-# Start the frontend
-echo "Starting frontend on port 8501..."
-streamlit run frontend/app.py --server.port 8501 --server.address 0.0.0.0
+# Initialize database
+echo "🗄️ Initializing database..."
+python -c "
+try:
+    from app.database import init_database
+    init_database()
+    print('✅ Database initialized successfully')
+except Exception as e:
+    print(f'❌ Database initialization failed: {e}')
+    exit(1)
+"
+
+# Pre-download models if not present (in background to speed up startup)
+echo "🤖 Checking models..."
+python -c "
+import os
+from pathlib import Path
+
+# Create model directories
+model_dirs = [
+    '/app/models/whisper',
+    '/app/models/transformers', 
+    '/app/models/huggingface',
+    '/app/models/torch'
+]
+
+for dir_path in model_dirs:
+    Path(dir_path).mkdir(parents=True, exist_ok=True)
+
+print('✅ Model directories ready')
+" &
+
+# Run the application based on the mode
+MODE=${SPEAKINSIGHTS_MODE:-full}
+
+case $MODE in
+    "mcp")
+        echo "🔗 Starting MCP Server mode..."
+        exec python start.py --mcp
+        ;;
+    "api")
+        echo "🌐 Starting API only mode..."
+        exec python start.py --api
+        ;;
+    "frontend")
+        echo "🎯 Starting Frontend only mode..."
+        exec python start.py --frontend
+        ;;
+    *)
+        echo "🚀 Starting full application..."
+        exec python start.py
+        ;;
+esac

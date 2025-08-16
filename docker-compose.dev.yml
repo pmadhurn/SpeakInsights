@@ -1,0 +1,50 @@
+# Docker Compose override for development
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+version: '3.8'
+
+services:
+  speakinsights:
+    # Mount source code for hot reload
+    volumes:
+      - .:/app
+      - app_data:/app/data
+      - model_cache:/app/models
+      - sqlite_data:/app/database
+    environment:
+      # Enable debug mode
+      - DEBUG=true
+      - PYTHONUNBUFFERED=1
+      # Use smaller model for faster development
+      - WHISPER_MODEL=tiny
+    # Override command for development
+    command: python start.py --mode full
+    # Enable hot reload
+    stdin_open: true
+    tty: true
+
+  speakinsights-mcp:
+    volumes:
+      - .:/app
+      - app_data:/app/data
+      - model_cache:/app/models
+      - sqlite_data:/app/database
+    environment:
+      - DEBUG=true
+      - PYTHONUNBUFFERED=1
+      - WHISPER_MODEL=tiny
+    # Keep container running for development
+    command: tail -f /dev/null
+
+  # Optional: Add development tools
+  adminer:
+    image: adminer
+    container_name: speakinsights-adminer
+    ports:
+      - "8080:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    networks:
+      - speakinsights-network
+    profiles:
+      - dev-tools

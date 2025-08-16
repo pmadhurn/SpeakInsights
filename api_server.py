@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
-"""Simple API server for external access to SpeakInsights data"""
+"""External API server for SpeakInsights data access"""
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from app.database import get_all_meetings, get_meeting_by_id, get_database_connection
+from config import config
 
-app = FastAPI(title="SpeakInsights API", version="1.0.0")
+app = FastAPI(
+    title="SpeakInsights External API", 
+    version=config.APP_VERSION,
+    description="External API for accessing SpeakInsights data"
+)
 
-# Enable CORS for external access
+# Enable CORS with specific origins for security
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=config.ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -85,4 +90,4 @@ async def database_info():
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=3000)
+    uvicorn.run(app, host=config.API_HOST, port=config.EXTERNAL_API_PORT)

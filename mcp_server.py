@@ -9,16 +9,22 @@ from mcp.server.models import InitializationOptions
 from mcp.server.stdio import stdio_server
 from mcp.types import Resource, Tool, TextContent
 
+# Import config
+try:
+    from config import config
+    DB_PATH = config.SQLITE_PATH
+    DATA_DIR = Path("data")
+except ImportError:
+    # Fallback if config is not available
+    if os.path.exists("/app"):
+        DB_PATH = "/app/database/speakinsights.db"
+        DATA_DIR = Path("/app/data")
+    else:
+        DB_PATH = "speakinsights.db"
+        DATA_DIR = Path("data")
+
 # Initialize MCP Server
 app = Server("speakinsights-mcp")
-
-# Docker-friendly paths - check if running in Docker
-if os.path.exists("/app"):
-    DB_PATH = "/app/speakinsights.db"
-    DATA_DIR = Path("/app/data")
-else:
-    DB_PATH = "speakinsights.db"
-    DATA_DIR = Path("data")
 
 # Ensure data directory exists
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -91,14 +97,27 @@ async def list_tools() -> List[Tool]:
         ),
         Tool(
             name="search_transcripts",
-            description="Search through meeting transcripts",
+            description="Search through meeting transcripts with context",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Search query"},
-                    "limit": {"type": "integer", "description": "Limit number of results"}
+                    "limit": {"type": "integer", "description": "Limit number of results", "default": 5},
+                    "context_chars": {"type": "integer", "description": "Characters of context around matches", "default": 300}
                 },
                 "required": ["query"]
+            }
+        ),
+        Tool(
+            name="get_full_transcript",
+            description="Get the complete transcript for a specific meeting",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "meeting_id": {"type": "integer", "description": "Meeting ID"},
+                    "chunk_size": {"type": "integer", "description": "Split transcript into chunks of this size", "default": 2000}
+                },
+                "required": ["meeting_id"]
             }
         ),
         Tool(
@@ -147,7 +166,13 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
     elif name == "search_transcripts":
         query = arguments.get("query")
         limit = arguments.get("limit", 5)
-        return await search_transcripts(query, limit)
+        context_chars = arguments.get("context_chars", 300)
+        return await search_transcripts(query, limit, context_chars)
+    
+    elif name == "get_full_transcript":
+        meeting_id = arguments.get("meeting_id")
+        chunk_size = arguments.get("chunk_size", 2000)
+        return await get_full_transcript(meeting_id, chunk_size)
     
     elif name == "get_sentiment_analysis":
         meeting_id = arguments.get("meeting_id")
@@ -231,25 +256,51 @@ async def get_meeting_details(meeting_id: int) -> List[TextContent]:
         columns = [row[1] for row in cursor.fetchall()]
         
         environment = "Docker Container" if os.path.exists("/app") else "Local Environment"
-        result = f"Meeting Details (ID: {meeting_id}) [{environment}]:\n"
+        result = f"Meeting Details (ID: {meeting_id}) [{environment}]:\n\n"
+        
+        # Format the output better, handling long transcripts
         for i, value in enumerate(meeting):
-            result += f"{columns[i]}: {value}\n"
+            column_name = columns[i]
+            if column_name == 'transcript' and value:
+                # Truncate very long transcripts for readability
+                transcript = str(value)
+                if len(transcript) > 2000:
+                    result += f"{column_name}: {transcript[:1000]}...\n[TRANSCRIPT TRUNCATED - {len(transcript)} total characters]\n..{transcript[-500:]}\n\n"
+                else:
+                    result += f"{column_name}: {transcript}\n\n"
+            elif column_name == 'action_items' and value:
+                # Format action items nicely
+                try:
+                    import json
+                    items = json.loads(value) if isinstance(value, str) else value
+                    if isinstance(items, list):
+                        result += f"{column_name}:\n"
+                        for idx, item in enumerate(items, 1):
+                            result += f"  {idx}. {item}\n"
+                        result += "\n"
+                    else:
+                        result += f"{column_name}: {value}\n\n"
+                except:
+                    result += f"{column_name}: {value}\n\n"
+            else:
+                result += f"{column_name}: {value}\n\n"
         
         conn.close()
         return [TextContent(type="text", text=result)]
     except Exception as e:
         return [TextContent(type="text", text=f"Error fetching meeting details: {str(e)}")]
 
-async def search_transcripts(query: str, limit: int) -> List[TextContent]:
-    """Search through transcripts"""
+async def search_transcripts(query: str, limit: int, context_chars: int = 300) -> List[TextContent]:
+    """Search through transcripts with better context"""
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         
         cursor.execute("""
-            SELECT id, title, transcript 
+            SELECT id, title, transcript, created_at
             FROM meetings 
             WHERE transcript LIKE ? 
+            ORDER BY created_at DESC
             LIMIT ?
         """, (f"%{query}%", limit))
         
@@ -259,20 +310,108 @@ async def search_transcripts(query: str, limit: int) -> List[TextContent]:
         if not results:
             return [TextContent(type="text", text=f"No transcripts found matching '{query}'")]
         
-        result = f"Search Results for '{query}':\n"
+        result = f"Search Results for '{query}' ({len(results)} matches):\n\n"
+        
         for meeting in results:
-            result += f"\nMeeting ID: {meeting[0]}, Title: {meeting[1]}\n"
-            # Show snippet of matching text
-            transcript = meeting[2] or ""
-            if query.lower() in transcript.lower():
-                start = max(0, transcript.lower().find(query.lower()) - 50)
-                end = min(len(transcript), start + 200)
-                snippet = transcript[start:end]
-                result += f"...{snippet}...\n"
+            meeting_id, title, transcript, created_at = meeting
+            result += f"📋 Meeting ID: {meeting_id}\n"
+            result += f"📝 Title: {title}\n"
+            result += f"📅 Date: {created_at}\n\n"
+            
+            # Find all occurrences of the query
+            transcript = transcript or ""
+            query_lower = query.lower()
+            transcript_lower = transcript.lower()
+            
+            matches = []
+            start = 0
+            while True:
+                pos = transcript_lower.find(query_lower, start)
+                if pos == -1:
+                    break
+                matches.append(pos)
+                start = pos + 1
+            
+            if matches:
+                result += f"🔍 Found {len(matches)} occurrence(s):\n"
+                for i, pos in enumerate(matches[:3]):  # Show max 3 matches per meeting
+                    context_start = max(0, pos - context_chars // 2)
+                    context_end = min(len(transcript), pos + len(query) + context_chars // 2)
+                    
+                    context = transcript[context_start:context_end]
+                    
+                    # Highlight the match (simple text highlighting)
+                    highlighted = context.replace(
+                        transcript[pos:pos + len(query)], 
+                        f"**{transcript[pos:pos + len(query)]}**"
+                    )
+                    
+                    result += f"  Match {i+1}: ...{highlighted}...\n\n"
+                
+                if len(matches) > 3:
+                    result += f"  ... and {len(matches) - 3} more matches\n\n"
+            
+            result += "─" * 50 + "\n\n"
         
         return [TextContent(type="text", text=result)]
     except Exception as e:
         return [TextContent(type="text", text=f"Error searching transcripts: {str(e)}")]
+
+async def get_full_transcript(meeting_id: int, chunk_size: int = 2000) -> List[TextContent]:
+    """Get complete transcript for a meeting, optionally chunked"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT title, transcript, created_at, audio_filename
+            FROM meetings 
+            WHERE id = ?
+        """, (meeting_id,))
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        if not result:
+            return [TextContent(type="text", text=f"Meeting {meeting_id} not found")]
+        
+        title, transcript, created_at, audio_filename = result
+        
+        if not transcript:
+            return [TextContent(type="text", text=f"No transcript available for meeting {meeting_id}")]
+        
+        # Prepare header
+        header = f"📋 Full Transcript - Meeting ID: {meeting_id}\n"
+        header += f"📝 Title: {title}\n"
+        header += f"📅 Date: {created_at}\n"
+        header += f"🎵 Audio File: {audio_filename or 'N/A'}\n"
+        header += f"📊 Length: {len(transcript)} characters\n"
+        header += "=" * 60 + "\n\n"
+        
+        # If transcript is small enough, return as single chunk
+        if len(transcript) <= chunk_size:
+            full_content = header + transcript
+            return [TextContent(type="text", text=full_content)]
+        
+        # Split into chunks
+        chunks = []
+        total_chunks = (len(transcript) + chunk_size - 1) // chunk_size
+        
+        for i in range(0, len(transcript), chunk_size):
+            chunk_num = (i // chunk_size) + 1
+            chunk_text = transcript[i:i + chunk_size]
+            
+            chunk_header = f"📋 Transcript Chunk {chunk_num}/{total_chunks} - Meeting ID: {meeting_id}\n"
+            chunk_header += f"📝 Title: {title}\n"
+            chunk_header += f"Characters: {i+1}-{min(i+len(chunk_text), len(transcript))} of {len(transcript)}\n"
+            chunk_header += "-" * 40 + "\n\n"
+            
+            chunks.append(TextContent(type="text", text=chunk_header + chunk_text))
+        
+        return chunks
+        
+    except Exception as e:
+        return [TextContent(type="text", text=f"Error fetching transcript: {str(e)}")]
 
 async def get_sentiment_analysis(meeting_id: int = None) -> List[TextContent]:
     """Get sentiment analysis results"""

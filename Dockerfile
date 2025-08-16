@@ -1,58 +1,70 @@
-# Start from Python 3.11 with CUDA support
+# Multi-stage build for better optimization
+FROM python:3.11-slim as builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install Python dependencies
+COPY requirements.txt requirements-mcp.txt ./
+RUN pip install --no-cache-dir --user -r requirements.txt
+RUN pip install --no-cache-dir --user -r requirements-mcp.txt
+
+# Production stage
 FROM python:3.11-slim
 
-# Install system dependencies (including ffmpeg for audio processing)
+# Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     curl \
     git \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
 # Create a non-root user and group
 RUN groupadd -r appgroup && useradd --no-log-init -r -g appgroup appuser
 
-# Set the working directory inside container
+# Copy Python packages from builder stage
+COPY --from=builder /root/.local /home/appuser/.local
+
+# Set the working directory
 WORKDIR /app
 
-# Copy requirements files
-COPY requirements.txt ./
-COPY requirements-mcp.txt ./
+# Create necessary directories with proper permissions
+RUN mkdir -p /app/data/audio /app/data/transcripts /app/data/exports \
+             /app/models/transformers /app/models/huggingface /app/models/torch \
+             /app/database /app/persistent_data /app/backups \
+    && chown -R appuser:appgroup /app \
+    && chmod -R 755 /app \
+    && chmod -R 777 /app/data /app/models /app/database
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install --no-cache-dir -r requirements-mcp.txt
-
-# Create necessary directories and set permissions
-RUN mkdir -p /app/data /app/models /home/appuser/.cache \
-    && chown -R appuser:appgroup /app /home/appuser \
-    && chmod -R 777 /app/data /app/models /home/appuser/.cache
-
-# Set environment variables for model caching
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV PATH=/home/appuser/.local/bin:$PATH
 ENV TRANSFORMERS_CACHE=/app/models/transformers
 ENV HF_HOME=/app/models/huggingface
 ENV TORCH_HOME=/app/models/torch
+ENV PYTHONUNBUFFERED=1
 
-# Copy the rest of the project
-COPY . .
+# Copy application code
+COPY --chown=appuser:appgroup . .
 
-# Ensure all files have correct permissions
-RUN chown -R appuser:appgroup /app && \
-    chmod -R 755 /app && \
-    chmod -R 777 /app/data /app/models /home/appuser/.cache
+# Make scripts executable
+RUN chmod +x docker-entrypoint.sh start.py test_setup.py
 
 # Create volumes
-VOLUME ["/app/data", "/app/models"]
+VOLUME ["/app/data", "/app/models", "/app/database"]
 
-# Expose the ports your apps use
+# Expose ports
 EXPOSE 8000 8501 3000
-
-# Create a simple startup script
-COPY docker-entrypoint.sh .
-RUN chmod +x docker-entrypoint.sh
 
 # Switch to non-root user
 USER appuser
 
-# For MCP server, we need the container to stay alive
-# The actual command will be specified in docker-compose or via docker exec
-CMD ["tail", "-f", "/dev/null"]
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Default command - can be overridden in docker-compose
+CMD ["python", "start.py"]

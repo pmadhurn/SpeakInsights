@@ -1,30 +1,96 @@
 import subprocess
 import time
-import webbrowser
 import os
 import sys
+import signal
+from pathlib import Path
+from config import config
+
+def cleanup_processes(processes):
+    """Clean up running processes"""
+    for process in processes:
+        if process and process.poll() is None:
+            try:
+                process.terminate()
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+            except Exception as e:
+                print(f"Warning: Could not terminate process: {e}")
 
 def main():
-    print("🚀 Starting SpeakInsights...")
+    print(f"🚀 Starting {config.APP_TITLE} v{config.APP_VERSION}...")
     
     # Check if MCP server flag is passed
     if len(sys.argv) > 1 and sys.argv[1] == "--mcp":
         print("🔗 Starting MCP Server for Claude integration...")
-        os.system("python mcp_server.py")
+        try:
+            os.system("python mcp_server.py")
+        except KeyboardInterrupt:
+            print("\n🛑 MCP Server stopped")
         return
     
-    # Start API server for external access
-    api_process = subprocess.Popen(["python", "api_server.py"])
-    print("✅ API server started on http://localhost:3000")
-    time.sleep(3)
+    processes = []
     
-    # Start Streamlit frontend
-    print("🎯 Starting frontend...")
     try:
-        os.system("streamlit run frontend/app.py")
+        # Ensure data directories exist
+        Path(config.UPLOAD_FOLDER).mkdir(parents=True, exist_ok=True)
+        Path(config.TRANSCRIPT_FOLDER).mkdir(parents=True, exist_ok=True)
+        Path(config.EXPORT_FOLDER).mkdir(parents=True, exist_ok=True)
+        
+        # Start external API server
+        print(f"🌐 Starting external API server on port {config.EXTERNAL_API_PORT}...")
+        api_process = subprocess.Popen([
+            sys.executable, "api_server.py"
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        processes.append(api_process)
+        time.sleep(2)
+        
+        # Check if API server started successfully
+        if api_process.poll() is not None:
+            print("❌ External API server failed to start")
+            return
+        
+        print(f"✅ External API server running on http://localhost:{config.EXTERNAL_API_PORT}")
+        
+        # Start main FastAPI backend
+        print(f"🔧 Starting main backend on port {config.MAIN_API_PORT}...")
+        backend_process = subprocess.Popen([
+            sys.executable, "-m", "uvicorn", "app.main:app", 
+            "--host", config.API_HOST, 
+            "--port", str(config.MAIN_API_PORT),
+            "--reload"
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        processes.append(backend_process)
+        time.sleep(3)
+        
+        # Check if backend started successfully
+        if backend_process.poll() is not None:
+            print("❌ Main backend failed to start")
+            return
+        
+        print(f"✅ Main backend running on http://localhost:{config.MAIN_API_PORT}")
+        
+        # Start Streamlit frontend
+        print(f"🎯 Starting frontend on port {config.STREAMLIT_PORT}...")
+        frontend_cmd = [
+            sys.executable, "-m", "streamlit", "run", "frontend/app.py",
+            "--server.port", str(config.STREAMLIT_PORT),
+            "--server.address", "0.0.0.0",
+            "--server.headless", "true",
+            "--browser.gatherUsageStats", "false"
+        ]
+        
+        # Run frontend in foreground so we can catch Ctrl+C
+        subprocess.run(frontend_cmd)
+        
+    except KeyboardInterrupt:
+        print("\n🛑 Shutting down services...")
+    except Exception as e:
+        print(f"❌ Error: {e}")
     finally:
-        # Cleanup API process when Streamlit exits
-        api_process.terminate()
+        cleanup_processes(processes)
+        print("✅ All services stopped")
 
 if __name__ == "__main__":
     main()
