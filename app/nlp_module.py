@@ -14,19 +14,19 @@ print("Loading NLP models...")
 summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")  # Smaller model
 sentiment_analyzer = pipeline("text-classification", model="SamLowe/roberta-base-go_emotions", top_k=None)
 
-def summarize_text(text, max_length=150):
+def summarize_text(text, max_length=50):
     """Generate summary of the transcript"""
     try:
         # Handle long texts by chunking
         max_chunk_length = 1024
         
         if len(text) <= max_chunk_length:
-            summary = summarizer(text, max_length=max_length, min_length=30, do_sample=False)
+            summary = summarizer(text, max_length=max_length, min_length=10, do_sample=False)
             return summary[0]['summary_text']
         else:
             # For long texts, summarize first chunk
             chunk = text[:max_chunk_length]
-            summary = summarizer(chunk, max_length=max_length, min_length=30, do_sample=False)
+            summary = summarizer(chunk, max_length=max_length, min_length=10, do_sample=False)
             return summary[0]['summary_text'] + " [Summary of beginning of meeting]"
             
     except Exception as e:
@@ -34,8 +34,11 @@ def summarize_text(text, max_length=150):
 
 def analyze_sentiment(text):
     try:
-        sample = text[:512] # Keep sampling for performance
-        raw_results = sentiment_analyzer(sample)
+        # Use a simpler sentiment analysis approach to avoid tensor size issues
+        sample = text[:256] if len(text) > 256 else text  # Limit input size
+        
+        # Use a more robust sentiment analysis
+        raw_results = sentiment_analyzer(sample, truncation=True, padding=True)
 
         professional_sentiments_list = [
             'admiration', 'amusement', 'approval', 'excitement', 'gratitude',
@@ -45,15 +48,20 @@ def analyze_sentiment(text):
             'confusion', 'curiosity', 'neutral', 'surprise'
         ]
 
-        # The pipeline with top_k=None returns a list containing a list of dicts
-        # e.g. [[{'label': '...', 'score': ...}, {'label': '...', 'score': ...}]]
-        if not raw_results or not raw_results[0]:
+        # Handle different output formats
+        if isinstance(raw_results, list) and len(raw_results) > 0:
+            results = raw_results[0] if isinstance(raw_results[0], list) else raw_results
+        else:
+            results = raw_results
+
+        if not results:
             return "Could not analyze sentiment (empty model output)"
 
         processed_sentiments = []
-        for result in raw_results[0]: # Access the inner list of sentiment dicts
-            if result['label'] in professional_sentiments_list and result['score'] > 0.3:
-                processed_sentiments.append(result)
+        for result in results:
+            if isinstance(result, dict) and 'label' in result and 'score' in result:
+                if result['label'] in professional_sentiments_list and result['score'] > 0.2:
+                    processed_sentiments.append(result)
         
         # Sort by score
         processed_sentiments.sort(key=lambda x: x['score'], reverse=True)
@@ -61,11 +69,9 @@ def analyze_sentiment(text):
         top_sentiments = processed_sentiments[:3]
 
         if not top_sentiments:
-            # Check if 'neutral' was high scoring but below 0.3 for professional list,
-            # or simply return a default neutral message.
-            # For simplicity, let's find the raw neutral score if no other professional sentiment is strong.
-            neutral_score_info = next((item for item in raw_results[0] if item['label'] == 'neutral'), None)
-            if neutral_score_info and neutral_score_info['score'] > 0.5: # Default threshold for general neutral
+            # Check for neutral sentiment
+            neutral_score_info = next((item for item in results if isinstance(item, dict) and item.get('label') == 'neutral'), None)
+            if neutral_score_info and neutral_score_info.get('score', 0) > 0.3:
                  return f"Neutral ({neutral_score_info['score']:.2%})"
             return "No strong specific emotions detected"
 

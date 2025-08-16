@@ -1,7 +1,12 @@
 import streamlit as st
 import sys
 import os
-
+import tempfile
+import json
+import time
+from datetime import datetime
+import plotly.express as px
+import plotly.graph_objects as go
 
 # Fix the import path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -10,19 +15,37 @@ sys.path.insert(0, parent_dir)
 
 from app.transcription import transcribe_audio
 from app.nlp_module import summarize_text, analyze_sentiment, extract_action_items
-import tempfile
-import json
-from datetime import datetime
+from app.database import save_meeting, get_all_meetings, get_meeting_by_id
 
 st.set_page_config(page_title="SpeakInsights", page_icon="🎙️", layout="wide")
 
-
-
-# Initialize session state
-if 'meetings' not in st.session_state:
-    st.session_state.meetings = []
+# Load meetings from database without aggressive caching
+def load_meetings():
+    try:
+        meetings = get_all_meetings()
+        return meetings
+    except Exception as e:
+        st.error(f"Database error: {e}")
+        return []
 
 st.title("🎙️ SpeakInsights - AI Meeting Assistant")
+
+# Add refresh button
+col1, col2 = st.columns([6, 1])
+with col2:
+    if st.button("🔄 Refresh", help="Reload meetings from database"):
+        st.rerun()
+
+# GPU Status Check
+try:
+    import torch
+    if torch.cuda.is_available():
+        gpu_name = torch.cuda.get_device_name(0)
+        st.success(f"🚀 GPU Available: {gpu_name}")
+    else:
+        st.warning("⚠️ GPU not available - using CPU (slower processing)")
+except:
+    st.info("ℹ️ GPU status unknown")
 
 # Sidebar for new meeting upload
 with st.sidebar:
@@ -39,55 +62,76 @@ with st.sidebar:
             tmp_file.write(uploaded_file.getvalue())
             tmp_file_path = tmp_file.name
         
-        with st.spinner("🎯 Processing your meeting... This may take a few minutes."):
-            # Step 1: Transcribe
-            st.write("📝 Transcribing audio...")
-            transcript = transcribe_audio(tmp_file_path)
-            
-            # Step 2: Generate insights
-            st.write("🧠 Generating insights...")
-            summary = summarize_text(transcript)
-            sentiment = analyze_sentiment(transcript)
-            action_items = extract_action_items(transcript)
-            
-            # Save meeting data
-            # Save meeting data
-            meeting_data = {
-                "id": len(st.session_state.meetings) + 1,
-                "title": meeting_title,
-                "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                "transcript": transcript,
-                "summary": summary,
-                "sentiment": sentiment,
-                "action_items": action_items,
-                "audio_file": uploaded_file.name
-            }
-            
-            st.session_state.meetings.insert(0, meeting_data)
-            
-            # Save to file (simple persistence)
-            os.makedirs("data/meetings", exist_ok=True)
-            with open(f"data/meetings/meeting_{meeting_data['id']}.json", "w") as f:
-                json.dump(meeting_data, f, indent=2)
-            
+        # Progress tracking
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # Step 1: Transcribe
+        status_text.text("📝 Transcribing audio...")
+        progress_bar.progress(25)
+        transcript = transcribe_audio(tmp_file_path)
+        
+        # Step 2: Generate summary
+        status_text.text("🧠 Generating summary...")
+        progress_bar.progress(50)
+        summary = summarize_text(transcript)
+        
+        # Step 3: Analyze sentiment
+        status_text.text("😊 Analyzing sentiment...")
+        progress_bar.progress(75)
+        sentiment = analyze_sentiment(transcript)
+        
+        # Step 4: Extract action items
+        status_text.text("✅ Extracting action items...")
+        progress_bar.progress(90)
+        action_items = extract_action_items(transcript)
+        
+        # Complete
+        status_text.text("🎉 Processing complete!")
+        progress_bar.progress(100)
+        
+        # Save meeting data to database
+        meeting_data = {
+            "title": meeting_title,
+            "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "transcript": transcript,
+            "summary": summary,
+            "sentiment": sentiment,
+            "action_items": action_items,
+            "audio_filename": uploaded_file.name
+        }
+        
+        # Save to database
+        try:
+            meeting_id = save_meeting(meeting_data)
+            st.success(f"✅ Meeting saved to database with ID: {meeting_id}")
             st.success("✅ Meeting processed successfully!")
-            
+            # Force refresh to show new data
+            time.sleep(2)
+            st.rerun()
+        except Exception as e:
+            st.error(f"Database error: {e}")
+        
         # Clean up temp file
         os.unlink(tmp_file_path)
 
-# Main content area
-if len(st.session_state.meetings) == 0:
+# Main content area - Load meetings from database
+meetings = load_meetings()
+
+if len(meetings) == 0:
     st.info("👋 Welcome! Upload your first meeting recording using the sidebar.")
+    st.info("💾 Your meetings will be stored in the persistent PostgreSQL database.")
 else:
     # Meeting selector
     st.header("📊 Meeting Dashboard")
+    st.info(f"📈 Found {len(meetings)} meetings in database")
     
-    meeting_titles = [m["title"] + f" ({m['date']})" for m in st.session_state.meetings]
+    meeting_titles = [f"{m['title']} ({m['date']})" for m in meetings]
     selected_idx = st.selectbox("Select a meeting:", range(len(meeting_titles)), 
                                 format_func=lambda x: meeting_titles[x])
     
     if selected_idx is not None:
-        meeting = st.session_state.meetings[selected_idx]
+        meeting = meetings[selected_idx]
         
         # Display meeting details
         col1, col2, col3 = st.columns(3)
@@ -111,7 +155,7 @@ else:
             
             # Download button
             st.download_button(
-                label="Download Transcript",
+                label="📥 Download Transcript",
                 data=meeting["transcript"],
                 file_name=f"{meeting['title']}_transcript.txt",
                 mime="text/plain"
@@ -142,13 +186,6 @@ else:
             else:
                 st.warning(f"Meeting Sentiment: {meeting['sentiment']}")
 
-
-
-# Add this to the imports
-import plotly.express as px
-import plotly.graph_objects as go
-
-# Add this function
 def create_analytics_dashboard(meetings):
     """Create analytics visualizations"""
     if not meetings:
@@ -179,4 +216,4 @@ def create_analytics_dashboard(meetings):
     fig = px.pie(values=[sentiments.count("Positive"), sentiments.count("Negative")], 
                  names=["Positive", "Negative"],
                  color_discrete_map={"Positive": "#2E8B57", "Negative": "#DC143C"})
-    st.plotly_chart(fig)
+    st.plotly_chart(fig) 

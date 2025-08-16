@@ -1,0 +1,10 @@
+services:
+  speakinsights-mcp:
+    environment:
+      - DEBUG=1
+      - LOG_LEVEL=DEBUG
+    volumes:
+      - ./mcp_server.py:/app/mcp_server.py
+      - ./test_mcp_server.py:/app/test_mcp_server.py
+    # Keep container running for persistent connection via docker exec
+    command: tail -f /dev/null

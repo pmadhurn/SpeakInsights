@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "speakinsights": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "-v",
+        "${workspaceFolder}:/app",
+        "-w",
+        "/app",
+        "speakinsights-speakinsights-mcp:latest",
+        "python",
+        "mcp_server.py"
+      ],
+      "env": {
+        "PYTHONPATH": "/app"
+      }
+    }
+  }
+} 

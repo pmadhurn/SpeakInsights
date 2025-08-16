@@ -1,0 +1,111 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database for production-ready data persistence
+  postgres:
+    image: postgres:15-alpine
+    container_name: speakinsights-postgres
+    environment:
+      POSTGRES_DB: speakinsights
+      POSTGRES_USER: speakinsights_user
+      POSTGRES_PASSWORD: speakinsights_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backups:/backups
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"  # External access for n8n and other tools
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U speakinsights_user -d speakinsights"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - speakinsights-network
+
+  speakinsights:
+    build: .
+    ports:
+      - "8501:8501"  # Streamlit
+      - "8000:8000"  # FastAPI
+      - "3000:3000"  # MCP API access
+    volumes:
+      # Named volumes for persistent data (survives rebuilds)
+      - app_data:/app/data
+      - model_cache:/app/models
+      - user_uploads:/app/uploads
+      # SQLite database backup (in case you still want to use SQLite)
+      - sqlite_data:/app/database
+      # Host backup directory (accessible from Windows)
+      - ./persistent_data:/app/persistent_data
+      - ./backups:/app/backups
+    environment:
+      - PYTHONPATH=/app
+      - CUDA_VISIBLE_DEVICES=0
+      # Database connection for PostgreSQL
+      - DATABASE_URL=postgresql://speakinsights_user:speakinsights_password@postgres:5432/speakinsights
+      # SQLite fallback
+      - SQLITE_PATH=/app/database/speakinsights.db
+      # Model cache locations
+      - TRANSFORMERS_CACHE=/app/models/transformers
+      - HF_HOME=/app/models/huggingface
+      - TORCH_HOME=/app/models/torch
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: python run.py
+    restart: unless-stopped
+    networks:
+      - speakinsights-network
+    
+  speakinsights-mcp:
+    build: .
+    container_name: speakinsights-mcp
+    volumes:
+      # Same persistent volumes as main app
+      - app_data:/app/data
+      - model_cache:/app/models
+      - user_uploads:/app/uploads
+      - sqlite_data:/app/database
+      - ./persistent_data:/app/persistent_data
+      - ./backups:/app/backups
+    environment:
+      - PYTHONPATH=/app
+      - DATABASE_URL=postgresql://speakinsights_user:speakinsights_password@postgres:5432/speakinsights
+      - SQLITE_PATH=/app/database/speakinsights.db
+    depends_on:
+      postgres:
+        condition: service_healthy
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    # Keep container running so Claude can connect via docker exec
+    command: tail -f /dev/null
+    networks:
+      - speakinsights-network
+
+# Named volumes for persistent data storage
+volumes:
+  postgres_data:
+    driver: local
+  app_data:
+    driver: local
+  model_cache:
+    driver: local
+  user_uploads:
+    driver: local
+  sqlite_data:
+    driver: local
+
+networks:
+  speakinsights-network:
+    driver: bridge
