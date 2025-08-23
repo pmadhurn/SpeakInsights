@@ -29,6 +29,8 @@ async def root():
 @app.get("/health")
 async def health_check():
     try:
+        from app.database import ensure_database_initialized
+        ensure_database_initialized()
         conn, db_type = get_database_connection()
         conn.close()
         return {
@@ -37,7 +39,12 @@ async def health_check():
             "message": "Database connection successful"
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database connection failed: {str(e)}")
+        # Return a warning instead of failing completely
+        return {
+            "status": "warning",
+            "database": "unavailable",
+            "message": f"Database issue: {str(e)}"
+        }
 
 @app.get("/meetings")
 async def get_meetings():

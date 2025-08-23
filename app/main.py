@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .transcription import transcribe_audio
-from .nlp_module import summarize_text, analyze_sentiment, extract_action_items
+from .nlp_module import summarize_text, analyze_sentiment, extract_action_items, send_action_items_webhook, send_summary_webhook
 from .database import save_meeting, get_all_meetings, get_meeting_by_id
 from config import config
 
@@ -137,6 +137,15 @@ async def upload_meeting(
         meeting_id = save_meeting(meeting_data)
         meeting_data["id"] = meeting_id
         
+        # Send to webhook if enabled
+        try:
+            if action_items:
+                send_action_items_webhook(str(meeting_id), action_items, meeting_data)
+            if summary:
+                send_summary_webhook(str(meeting_id), summary, meeting_data)
+        except Exception as e:
+            print(f"[WARNING] Webhook sending failed: {e}")
+        
         return meeting_data
         
     except HTTPException:
@@ -159,3 +168,84 @@ def get_meeting(meeting_id: int):
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
     return meeting
+
+@app.post("/api/meetings/{meeting_id}/regenerate-summary")
+def regenerate_summary(meeting_id: int):
+    """Regenerate summary for an existing meeting"""
+    meeting = get_meeting_by_id(meeting_id)
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    
+    try:
+        # Regenerate summary from existing transcript
+        new_summary = summarize_text(meeting['transcript'])
+        
+        # Update the meeting in database
+        from .database import update_meeting_summary
+        update_meeting_summary(meeting_id, new_summary)
+        
+        return {
+            "message": "Summary regenerated successfully",
+            "meeting_id": meeting_id,
+            "new_summary": new_summary
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to regenerate summary: {str(e)}")
+
+@app.post("/api/meetings/{meeting_id}/regenerate-action-items")
+def regenerate_action_items(meeting_id: int):
+    """Regenerate action items for an existing meeting"""
+    meeting = get_meeting_by_id(meeting_id)
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    
+    try:
+        # Regenerate action items from existing transcript
+        new_action_items = extract_action_items(meeting['transcript'])
+        
+        # Update the meeting in database
+        from .database import update_meeting_action_items
+        update_meeting_action_items(meeting_id, new_action_items)
+        
+        # Send to webhook if enabled
+        try:
+            if new_action_items:
+                send_action_items_webhook(str(meeting_id), new_action_items, meeting)
+        except Exception as e:
+            print(f"[WARNING] Webhook sending failed: {e}")
+        
+        return {
+            "message": "Action items regenerated successfully",
+            "meeting_id": meeting_id,
+            "new_action_items": new_action_items
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to regenerate action items: {str(e)}")
+
+@app.post("/api/webhook/test")
+def test_webhook():
+    """Test webhook connectivity"""
+    try:
+        from .nlp_module import test_webhook_connection
+        success = test_webhook_connection()
+        
+        if success:
+            return {"message": "Webhook test successful", "status": "connected"}
+        else:
+            return {"message": "Webhook test failed", "status": "failed"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Webhook test failed: {str(e)}")
+
+@app.get("/api/webhook/config")
+def get_webhook_config():
+    """Get current webhook configuration (without sensitive data)"""
+    safe_config = {
+        "enabled": config.WEBHOOK_ENABLED,
+        "send_action_items": config.WEBHOOK_SEND_ACTION_ITEMS,
+        "send_summaries": config.WEBHOOK_SEND_SUMMARIES,
+        "timeout": config.WEBHOOK_TIMEOUT,
+        "retry_attempts": config.WEBHOOK_RETRY_ATTEMPTS,
+        "include_meeting_metadata": config.WEBHOOK_INCLUDE_METADATA,
+        "webhook_url_configured": bool(config.WEBHOOK_URL)
+    }
+    return safe_config

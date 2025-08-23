@@ -1,0 +1,140 @@
+{
+  "name": "SpeakInsights Action Items Handler",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "speakinsights-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "your-webhook-id-here"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.query.type}}",
+              "operation": "equal",
+              "value2": "action_items"
+            }
+          ]
+        }
+      },
+      "id": "filter-action-items",
+      "name": "Filter Action Items",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "subject": "New Action Items from Meeting {{$json.query.meeting_id}}",
+        "message": "Meeting: {{JSON.parse($json.query.meeting_metadata).filename}}\nProcessed: {{$json.query.timestamp}}\n\nAction Items:\n{{$json.query.action_items.split('|').map(item => '- ' + item).join('\\n')}}",
+        "options": {
+          "allowUnauthorizedCerts": false,
+          "replyTo": "noreply@yourcompany.com"
+        }
+      },
+      "id": "send-email",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [680, 200],
+      "credentials": {
+        "smtp": {
+          "id": "your-smtp-credentials-id",
+          "name": "SMTP Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "🎙️ **New Action Items from Meeting {{$json.query.meeting_id}}**\n\n📁 **File:** {{JSON.parse($json.query.meeting_metadata).filename}}\n⏰ **Processed:** {{$json.query.timestamp}}\n\n✅ **Action Items:**\n{{$json.query.action_items.split('|').map(item => '• ' + item).join('\\n')}}",
+        "options": {}
+      },
+      "id": "send-discord",
+      "name": "Send to Discord",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 1,
+      "position": [680, 400],
+      "credentials": {
+        "discordWebhook": {
+          "id": "your-discord-webhook-id",
+          "name": "Discord Webhook"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"success\",\n  \"message\": \"Action items processed\",\n  \"meeting_id\": \"{{$json.query.meeting_id}}\"\n}"
+      },
+      "id": "webhook-response",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Filter Action Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Action Items": {
+      "main": [
+        [
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send to Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send to Discord": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {},
+  "versionId": "1"
+}

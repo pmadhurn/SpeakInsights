@@ -15,7 +15,7 @@ def ensure_directories():
     directories = ["data", "data/audio", "data/transcripts", "data/exports"]
     for directory in directories:
         Path(directory).mkdir(parents=True, exist_ok=True)
-    print("✅ Required directories created")
+    print("[OK] Required directories created")
 
 def check_dependencies():
     """Check if required dependencies are available"""
@@ -24,52 +24,52 @@ def check_dependencies():
         import streamlit
         import whisper
         import transformers
-        print("✅ Core dependencies available")
+        print("[OK] Core dependencies available")
         return True
     except ImportError as e:
-        print(f"❌ Missing dependency: {e}")
+        print(f"[ERROR] Missing dependency: {e}")
         print("Please run: pip install -r requirements.txt")
         return False
 
 def start_mcp_server():
     """Start MCP server for Claude integration"""
-    print("🔗 Starting MCP Server for Claude integration...")
+    print("[MCP] Starting MCP Server for Claude integration...")
     try:
         subprocess.run([sys.executable, "mcp_server.py"], check=True)
     except KeyboardInterrupt:
-        print("\n🛑 MCP Server stopped")
+        print("\n[STOP] MCP Server stopped")
     except Exception as e:
-        print(f"❌ MCP Server error: {e}")
+        print(f"[ERROR] MCP Server error: {e}")
 
 def start_api_only():
     """Start only the API server"""
-    print("🌐 Starting API server only...")
+    print("[API] Starting API server only...")
     try:
         subprocess.run([
             sys.executable, "-m", "uvicorn", "app.main:app",
             "--host", "0.0.0.0", "--port", "8000", "--reload"
         ], check=True)
     except KeyboardInterrupt:
-        print("\n🛑 API server stopped")
+        print("\n[STOP] API server stopped")
 
 def start_frontend_only():
     """Start only the frontend"""
-    print("🎯 Starting frontend only...")
+    print("[FRONTEND] Starting frontend only...")
     try:
         subprocess.run([
             sys.executable, "-m", "streamlit", "run", "frontend/app.py",
             "--server.port", "8501", "--server.address", "0.0.0.0"
         ], check=True)
     except KeyboardInterrupt:
-        print("\n🛑 Frontend stopped")
+        print("\n[STOP] Frontend stopped")
 
 def start_full_application():
     """Start the full application (API + Frontend)"""
-    print("🚀 Starting full SpeakInsights application...")
+    print("[START] Starting full SpeakInsights application...")
     try:
         subprocess.run([sys.executable, "run.py"], check=True)
     except KeyboardInterrupt:
-        print("\n🛑 Application stopped")
+        print("\n[STOP] Application stopped")
 
 def main():
     print("=" * 60)

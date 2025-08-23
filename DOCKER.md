@@ -11,6 +11,12 @@ This guide covers deploying SpeakInsights using Docker and Docker Compose for pr
 
 ## Quick Start
 
+### Automated Validation (Recommended)
+```bash
+# Test everything and deploy
+python validate-deployment.py
+```
+
 ### Windows
 ```cmd
 docker-deploy.bat
@@ -32,6 +38,16 @@ docker-compose up -d
 
 # View logs
 docker-compose logs -f
+```
+
+### Validation Only
+```bash
+# Test shell scripts
+bash test-shell-scripts.sh    # Linux/Mac
+test-shell-scripts.bat        # Windows
+
+# Test Docker health
+python docker-health-check.py
 ```
 
 ## Architecture

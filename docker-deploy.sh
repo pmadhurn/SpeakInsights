@@ -12,17 +12,42 @@ if ! command -v docker &> /dev/null; then
     exit 1
 fi
 
-if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
+# Check for Docker Compose (v1 or v2)
+DOCKER_COMPOSE_CMD=""
+if command -v docker-compose >/dev/null 2>&1; then
+    DOCKER_COMPOSE_CMD="docker-compose"
+elif docker compose version >/dev/null 2>&1; then
+    DOCKER_COMPOSE_CMD="docker compose"
+else
     echo "❌ Docker Compose is not installed. Please install Docker Compose first."
     exit 1
 fi
 
+echo "✅ Using Docker Compose: $DOCKER_COMPOSE_CMD"
+
 # Function to check if a port is in use
 check_port() {
     local port=$1
-    if netstat -tuln 2>/dev/null | grep -q ":$port "; then
-        echo "⚠️  Port $port is already in use"
-        return 1
+    # Try multiple methods to check port usage
+    if command -v netstat >/dev/null 2>&1; then
+        if netstat -tuln 2>/dev/null | grep -q ":$port "; then
+            echo "⚠️  Port $port is already in use"
+            return 1
+        fi
+    elif command -v ss >/dev/null 2>&1; then
+        if ss -tuln 2>/dev/null | grep -q ":$port "; then
+            echo "⚠️  Port $port is already in use"
+            return 1
+        fi
+    elif command -v lsof >/dev/null 2>&1; then
+        if lsof -i ":$port" >/dev/null 2>&1; then
+            echo "⚠️  Port $port is already in use"
+            return 1
+        fi
+    else
+        # Skip port check if no tools available
+        echo "⚠️  Cannot check port $port (no netstat/ss/lsof available)"
+        return 0
     fi
     return 0
 }
@@ -128,13 +153,13 @@ echo "   Running: ${DETACH_FLAG:-"in foreground"}"
 # Start the services
 if [ "$MODE" = "mcp" ]; then
     echo "🔗 Starting MCP server only..."
-    docker-compose $COMPOSE_FILES up $BUILD_FLAG $DETACH_FLAG speakinsights-mcp postgres
+    $DOCKER_COMPOSE_CMD $COMPOSE_FILES up $BUILD_FLAG $DETACH_FLAG speakinsights-mcp postgres
 else
     echo "🚀 Starting full application..."
     if [ "$DEV_MODE" = true ]; then
         echo "   Development mode enabled with hot reload"
     fi
-    docker-compose $COMPOSE_FILES up $BUILD_FLAG $DETACH_FLAG
+    $DOCKER_COMPOSE_CMD $COMPOSE_FILES up $BUILD_FLAG $DETACH_FLAG
 fi
 
 if [ -n "$DETACH_FLAG" ]; then
@@ -148,12 +173,12 @@ if [ -n "$DETACH_FLAG" ]; then
     echo "   API Docs:     http://localhost:8000/docs"
     echo ""
     echo "📊 Monitor with:"
-    echo "   docker-compose logs -f                    # All services"
-    echo "   docker-compose logs -f speakinsights      # Main app"
-    echo "   docker-compose logs -f speakinsights-mcp  # MCP server"
+    echo "   $DOCKER_COMPOSE_CMD logs -f                    # All services"
+    echo "   $DOCKER_COMPOSE_CMD logs -f speakinsights      # Main app"
+    echo "   $DOCKER_COMPOSE_CMD logs -f speakinsights-mcp  # MCP server"
     echo ""
     echo "🛑 Stop with:"
-    echo "   docker-compose down"
+    echo "   $DOCKER_COMPOSE_CMD down"
     echo ""
     echo "🔧 MCP Server access:"
     echo "   docker exec -it speakinsights-mcp python mcp_server.py"

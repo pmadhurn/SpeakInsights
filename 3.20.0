@@ -1,0 +1,4 @@
+Requirement already satisfied: ctranslate2 in c:\users\pmadh\onedrive\desktop\speakinsights\venv\lib\site-packages (4.4.0)
+Requirement already satisfied: setuptools in c:\users\pmadh\onedrive\desktop\speakinsights\venv\lib\site-packages (from ctranslate2) (65.5.0)
+Requirement already satisfied: numpy in c:\users\pmadh\onedrive\desktop\speakinsights\venv\lib\site-packages (from ctranslate2) (2.3.2)
+Requirement already satisfied: pyyaml<7,>=5.3 in c:\users\pmadh\onedrive\desktop\speakinsights\venv\lib\site-packages (from ctranslate2) (6.0.2)

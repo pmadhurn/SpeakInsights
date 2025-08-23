@@ -19,6 +19,8 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     curl \
     git \
+    netcat-openbsd \
+    procps \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
